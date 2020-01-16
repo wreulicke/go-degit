@@ -14,8 +14,8 @@ builds:
       - -s -w
 checksum:
   name_template: checksums.txt
-archive:
-  format: binary
+archives:
+  - format: binary
 snapshot:
   name_template: master
 changelog:
