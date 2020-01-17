@@ -10,9 +10,7 @@ import (
 
 	"gopkg.in/src-d/go-billy.v4/memfs"
 
-	"fmt"
-	"log"
-
+	"github.com/sirupsen/logrus"
 	giturls "github.com/whilp/git-urls"
 	"gopkg.in/src-d/go-billy.v4"
 	"gopkg.in/src-d/go-git.v4"
@@ -35,69 +33,23 @@ func toURL(rawurl string) (*url.URL, error) {
 	return url.Parse("https://" + path.Join("github.com", rawurl+".git"))
 }
 
-type PrefixMatcher struct {
+type Copier struct {
+	logger *logrus.Logger
 	prefix string
+	dest   string
 }
 
-func (p *PrefixMatcher) Match(path string) bool {
-	return strings.HasPrefix(path, p.prefix)
-}
-
-func List(fs billy.Filesystem, f os.FileInfo, base string) {
-	if f.IsDir() {
-		d, err := fs.ReadDir(path.Join(base, f.Name()))
-		if err != nil {
-			return
-		}
-		for _, e := range d {
-			List(fs, e, path.Join(base, f.Name()))
-		}
-		return
-	}
-	fmt.Println(path.Join(base, f.Name()))
-}
-
-func Clone(u *url.URL, prefix string, dest string) error {
-	log.Printf("Cloning... %s into %s\n", u, dest)
-	f := memfs.New()
-	c := git.CloneOptions{
-		URL:           u.String(),
-		ReferenceName: plumbing.ReferenceName("refs/heads/master"),
-		Depth:         1,
-	}
-	_, err := git.Clone(memory.NewStorage(), f, &c)
+func (c *Copier) WriteResource(fs billy.Filesystem) error {
+	d, err := fs.ReadDir("/")
 	if err != nil {
 		return err
 	}
-	m := &PrefixMatcher{
-		prefix: prefix,
-	}
-	return WriteResource(f, dest, m)
+	return c.visitFiles(fs, d, []string{})
 }
 
-func mkdirRecursively(path string) error {
-	_, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		err := os.Mkdir(path, 0771)
-		if _, ok := err.(*os.PathError); ok {
-			err := mkdirRecursively(filepath.Dir(path))
-			if err != nil {
-				return err
-			}
-			if err := os.Mkdir(path, 0771); err != nil {
-				return err
-			}
-			return nil
-		}
-		return err
-	}
-	return nil
-}
-
-func WriteResource(fs billy.Filesystem, dest string, m *PrefixMatcher) error {
-	d, _ := fs.ReadDir("/")
-	for _, e := range d {
-		err := writeResourceInternal(fs, e, dest, m, []string{})
+func (c *Copier) visitFiles(fs billy.Filesystem, files []os.FileInfo, base []string) error {
+	for _, e := range files {
+		err := c.visitFile(fs, e, base)
 		if err != nil {
 			return err
 		}
@@ -105,27 +57,26 @@ func WriteResource(fs billy.Filesystem, dest string, m *PrefixMatcher) error {
 	return nil
 }
 
-func writeResourceInternal(fs billy.Filesystem, f os.FileInfo, dest string, m *PrefixMatcher, base []string) error {
+func (c *Copier) visitDirectory(fs billy.Filesystem, f os.FileInfo, base []string) error {
 	base = append(base, f.Name())
 	p := path.Join(base...)
-	if f.IsDir() {
-		d, err := fs.ReadDir(p)
-		if err != nil {
-			return err
-		}
-		for _, e := range d {
-			err := writeResourceInternal(fs, e, dest, m, base)
-			if err != nil {
-				return err
-			}
-		}
+	d, err := fs.ReadDir(p)
+	if err != nil {
+		return err
+	}
+	return c.visitFiles(fs, d, base)
+}
+
+func (c *Copier) copyFile(fs billy.Filesystem, f os.FileInfo, base []string) error {
+	base = append(base, f.Name())
+	p := path.Join(base...)
+	if !strings.HasPrefix(p, c.prefix) {
 		return nil
 	}
-	destPath := filepath.Join(dest, filepath.Join(base...))
-	if !m.Match(p) {
-		return nil
-	}
+	c.logger.Infof("%s %s", filepath.Join(c.dest, filepath.Join(base...)), c.prefix)
+	destPath := filepath.Join(c.dest, strings.TrimPrefix(filepath.Join(base...), c.prefix))
 	basePath := filepath.Dir(destPath)
+	c.logger.Infof("matched! copy %s to %s", p, destPath)
 	err := mkdirRecursively(basePath)
 	if err != nil {
 		return err
@@ -139,5 +90,51 @@ func writeResourceInternal(fs billy.Filesystem, f os.FileInfo, dest string, m *P
 		return err
 	}
 	_, err = io.Copy(destFile, file)
+	return err
+}
+
+func (c *Copier) visitFile(fs billy.Filesystem, f os.FileInfo, base []string) error {
+	if f.IsDir() {
+		return c.visitDirectory(fs, f, base)
+	}
+	return c.copyFile(fs, f, base)
+}
+
+// Clone repository into destination striping prefix
+func Clone(l *logrus.Logger, u *url.URL, prefix string, dest string) error {
+	l.Infof("Cloning... %s into %s", u.String(), dest)
+	f := memfs.New()
+	c := git.CloneOptions{
+		URL:           u.String(),
+		ReferenceName: plumbing.ReferenceName("refs/heads/master"),
+		Depth:         1,
+	}
+	_, err := git.Clone(memory.NewStorage(), f, &c)
+	if err != nil {
+		return err
+	}
+	cp := Copier{
+		dest:   dest,
+		prefix: prefix,
+		logger: l,
+	}
+	return cp.WriteResource(f)
+}
+
+func mkdirRecursively(path string) error {
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		return nil
+	}
+	err := os.Mkdir(path, 0771)
+	if _, ok := err.(*os.PathError); ok {
+		err := mkdirRecursively(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		if err := os.Mkdir(path, 0771); err != nil {
+			return err
+		}
+		return nil
+	}
 	return err
 }

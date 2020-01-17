@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"log"
 	"os"
@@ -32,7 +33,11 @@ func NewCommand() *cobra.Command {
 				prefix = args[1]
 				dest = args[2]
 			}
-			return Clone(u, prefix, dest)
+			// TODO support windows
+			if !strings.HasSuffix(prefix, "/") {
+				prefix = prefix + "/"
+			}
+			return Clone(logrus.New(), u, prefix, dest)
 		},
 	}
 	return cmd
