@@ -37,7 +37,9 @@ func NewCommand() *cobra.Command {
 			if !strings.HasSuffix(prefix, "/") {
 				prefix = prefix + "/"
 			}
-			return Clone(logrus.New(), u, prefix, dest)
+			l := logrus.New()
+			l.SetLevel(logrus.InfoLevel)
+			return Clone(l, u, prefix, dest)
 		},
 	}
 	return cmd

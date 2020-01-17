@@ -73,10 +73,9 @@ func (c *Copier) copyFile(fs billy.Filesystem, f os.FileInfo, base []string) err
 	if !strings.HasPrefix(p, c.prefix) {
 		return nil
 	}
-	c.logger.Infof("%s %s", filepath.Join(c.dest, filepath.Join(base...)), c.prefix)
 	destPath := filepath.Join(c.dest, strings.TrimPrefix(filepath.Join(base...), c.prefix))
 	basePath := filepath.Dir(destPath)
-	c.logger.Infof("matched! copy %s to %s", p, destPath)
+	c.logger.Debugf("matched! copy %s to %s", p, destPath)
 	err := mkdirRecursively(basePath)
 	if err != nil {
 		return err
